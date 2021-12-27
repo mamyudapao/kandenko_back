@@ -2,12 +2,6 @@ from socket import *
 from database import get_database
 import json
 import datetime
-"""
-IPアドレスの確認方法
-コマンドプロンプトで「ipconfig」と入力し
-と入力し、
-［IPv4 アドレス］または［IPアドレス］の値が、使用しているパソコンのIPアドレスです。
-"""
 
 print("start network")
 addr = ("", 50007)  # 192.168.0.9
