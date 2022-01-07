@@ -119,7 +119,7 @@ const addOneAt = (
 ): ReadonlyArray<number> => {
   const result: Array<number> = [...array];
   if (result[index] === undefined) {
-    result[index] = 0;
+    result[index] = 1;
   } else {
     result[index] += 1;
   }
