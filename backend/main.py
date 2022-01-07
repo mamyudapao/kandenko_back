@@ -9,7 +9,8 @@ addr = ("", 50007)  # 192.168.0.9
 db = get_database()
 collection_MPU6886 = db["MPU6886"]
 collection_ENV3 = db["ENV3"]
-collection_GPS = db["GPS"]
+collection_indexData = db["indexData"]
+# collection_GPS = db["GPS"]
 
 print("network setup started")
 UDPSock = socket(AF_INET, SOCK_DGRAM)
@@ -27,7 +28,9 @@ while True:
         continue
 
     if addr != 0:
+        print(data)
         str_data = data.decode('utf-8')
+
         # 現在時刻を取得
         dt_now = datetime.datetime.now()
         json_data = json.loads(str_data)
@@ -37,11 +40,16 @@ while True:
         # ENV3のデータ
         ENV3 = json_data['ENVIII']
         ENV3['created_at'] = dt_now
-        # GPSのデータ
-        GPS = json_data['GPS']
-        GPS['created_at'] = dt_now
-        # print(f"get message from {addr} --> {str_data}")
+        # indexData
+        indexData = json_data['indexData']
+        indexData['created_at'] = dt_now
         collection_MPU6886.insert_one(MPU6886)
         collection_ENV3.insert_one(ENV3)
-        collection_GPS.insert_one(GPS)
+        collection_indexData.insert_one(indexData)
+
+        # GPSのデータ
+        # GPS = json_data['GPS']
+        # GPS['created_at'] = dt_now
+        # print(f"get message from {addr} --> {str_data}")
+        # collection_GPS.insert_one(GPS)
 print("end!")
