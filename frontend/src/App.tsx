@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
-import { env3, MPU6886Object, indexData, heavyLoad } from "./types";
+import { env3, MPU6886Object, indexData } from "./types";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -10,176 +10,238 @@ import {
   Title,
   Tooltip,
   Legend,
+  ChartData,
+  ChartOptions,
 } from "chart.js";
 import { Line } from "react-chartjs-2";
 
-function divideArrIntoPieces(arr: Array<any>, n: number) {
-  let arrList = [];
-  let idx = 0;
-  while (idx < arr.length) {
-    arrList.push(arr.splice(idx, idx + n));
+/**
+ * 配列を指定した単位で分割する
+ * @param arr 分割する配列
+ * @param n 分割する単位
+ * @returns 分割された配列
+ * @example
+ * ```ts
+ * divideArrIntoPieces([0, 1, 2, 3, 4, 5, 6, 7], 3) // [[0, 1, 2], [3, 4, 5], [6, 7]]
+ * ```
+ */
+const divideArrIntoPieces = <T extends unknown>(
+  arr: ReadonlyArray<T>,
+  n: number
+): ReadonlyArray<ReadonlyArray<T>> => {
+  return Array.from({ length: Math.ceil(arr.length / n) }).map((_, index) => {
+    return arr.slice(index * n, (index + 1) * n);
+  });
+};
+
+/**
+ * 60秒ごとの平均
+ */
+const calculateMPU6886Average = (
+  MPU6886: ReadonlyArray<MPU6886Object>
+): ReadonlyArray<{
+  readonly head: number;
+  readonly left: number;
+  readonly right: number;
+}> => {
+  return divideArrIntoPieces(MPU6886, 60).map((data) => {
+    const sum = data.reduce(
+      (sum, value) => ({
+        head:
+          sum.head +
+          Math.abs(value.head.accX) +
+          Math.abs(value.head.accY) +
+          Math.abs(value.head.accZ) +
+          Math.abs(value.head.gyroX) +
+          Math.abs(value.head.gyroY) +
+          Math.abs(value.head.gyroZ),
+        left:
+          sum.left +
+          Math.abs(value.left.accX) +
+          Math.abs(value.left.accY) +
+          Math.abs(value.left.accZ) +
+          Math.abs(value.left.gyroX) +
+          Math.abs(value.left.gyroY) +
+          Math.abs(value.left.gyroZ),
+        right:
+          sum.right +
+          Math.abs(value.right.accX) +
+          Math.abs(value.right.accY) +
+          Math.abs(value.right.accZ) +
+          Math.abs(value.right.gyroX) +
+          Math.abs(value.right.gyroY) +
+          Math.abs(value.right.gyroZ),
+      }),
+      { head: 0, left: 0, right: 0 }
+    );
+    return {
+      head: sum.head / data.length,
+      right: sum.right / data.length,
+      left: sum.left / data.length,
+    };
+  });
+};
+
+const labels: ReadonlyArray<number> = [1, 2, 3, 4, 5];
+
+const calculateMPU6886AverageChartData = (
+  MPU6886: ReadonlyArray<MPU6886Object>
+): ChartData<"line", ReadonlyArray<number>, number> => {
+  const MPU6886Average = calculateMPU6886Average(MPU6886);
+  return {
+    labels: [...labels],
+    datasets: [
+      {
+        label: "頭のacc・gyroの平均値",
+        data: MPU6886Average.map((e) => e.head),
+        borderColor: "rgb(255, 99, 132)",
+        backgroundColor: "rgba(255, 99, 132, 0.5)",
+      },
+      {
+        label: "左腕のacc・gyroの平均値",
+        data: MPU6886Average.map((e) => e.left),
+        borderColor: "rgb(2, 99, 132)",
+        backgroundColor: "rgba(2, 99, 132, 0.5)",
+      },
+      {
+        label: "右腕のacc・gyroの平均値",
+        data: MPU6886Average.map((e) => e.right),
+        borderColor: "rgb(2, 200, 132)",
+        backgroundColor: "rgba(2, 200, 132, 0.5)",
+      },
+    ],
+  };
+};
+
+const addOneAt = (
+  array: ReadonlyArray<number>,
+  index: number
+): ReadonlyArray<number> => {
+  const result: Array<number> = [...array];
+  if (result[index] === undefined) {
+    result[index] = 1;
+  } else {
+    result[index] += 1;
   }
-  return arrList;
-}
+  return result;
+};
 
-const App = () => {
-  const [MPU6886, setMPU6886] = useState<MPU6886Object[][] | null>(null);
-  const [env3, setEnv3] = useState<null | env3[][]>(null); //平均値を出す
-  const [indexData, setIndexData] = useState<null | indexData[]>(null);
-  const [armUpDown, setArmUpDown] = useState<number | null>(null);
-  const [head, setHead] = useState<heavyLoad[] | null>(null); //平均値を出す
-  const [left, setLeft] = useState<heavyLoad[] | null>(null); //平均値を出す
-  const [right, setRight] = useState<heavyLoad[] | null>(null); //平均値を出す
-
-  //平均値たち
-  const [avgHead, setAvgHead] = useState<number[] | null>(null);
-  const [avgLeft, setAvgLeft] = useState<number[] | null>(null);
-  const [avgRight, setAvgRight] = useState<number[] | null>(null);
-  const [headHeavyLoad, setHeadHeavyLoad] = useState<number[] | null>(null);
-  const [leftHeavyLoad, setLeftHeavyLoad] = useState<number[] | null>(null);
-  const [rightHeavyLoad, setRightHeavyLoad] = useState<number[] | null>(null);
-
-  const getDataFromDB = async () => {
-    await axios
-      .get("http://localhost:3030/api/edge_data/MPU6886")
-      .then((response) => {
-        console.log(response.data);
-        const splitedData = divideArrIntoPieces(response.data, 60);
-        console.log(splitedData);
-        const mpu6886Array = setMPU6886(splitedData as MPU6886Object[][]);
-      });
-    await axios
-      .get("http://localhost:3030/api/edge_data/ENV3")
-      .then((response) => {
-        console.log(response.data);
-        const splitedData = divideArrIntoPieces(response.data, 60);
-        console.log(splitedData);
-        setEnv3(splitedData as env3[][]);
-      });
-    await axios
-      .get("http://localhost:3030/api/edge_data/indexData")
-      .then((response) => {
-        console.log(response.data);
-        setIndexData(response.data as indexData[]);
-      });
-  };
-
-  const formatArmUpDown = () => {
-    setArmUpDown(indexData![indexData!.length - 1].armUpDown);
-    console.log(armUpDown);
-  };
-
-  const getHeavyLoad = () => {
-    let headArray: heavyLoad[] = [];
-    let leftArray: heavyLoad[] = [];
-    let rightArray: heavyLoad[] = [];
-    indexData!.forEach((data: indexData, index: number) => {
+const calculateHeavyLoadPerMinute = (
+  indexData: ReadonlyArray<indexData>
+): {
+  readonly headHeavyLoad: ReadonlyArray<number>;
+  readonly leftHeavyLoad: ReadonlyArray<number>;
+  readonly rightHeavyLoad: ReadonlyArray<number>;
+} => {
+  const headArr = indexData.reduce<ReadonlyArray<number>>(
+    (arr, data, index) => {
       if (data.diffHead > 100) {
-        headArray.push({ index: index, value: data.diffHead });
+        return addOneAt(arr, Math.round(index / 10) - 1);
       }
+      return arr;
+    },
+    []
+  );
+  const leftArr = indexData.reduce<ReadonlyArray<number>>(
+    (arr, data, index) => {
       if (data.diffLeft > 100) {
-        leftArray.push({ index: index, value: data.diffLeft });
+        return addOneAt(arr, Math.round(index / 10) - 1);
       }
+      return arr;
+    },
+    []
+  );
+  const rightArr = indexData.reduce<ReadonlyArray<number>>(
+    (arr, data, index) => {
       if (data.diffRight > 100) {
-        rightArray.push({ index: index, value: data.diffRight });
+        return addOneAt(arr, Math.round(index / 10) - 1);
       }
-    });
-    setHead(headArray);
-    setLeft(leftArray);
-    setRight(rightArray);
+      return arr;
+    },
+    []
+  );
+  console.log(headArr);
+  console.log(leftArr);
+  console.log(rightArr);
+  return {
+    headHeavyLoad: headArr,
+    leftHeavyLoad: leftArr,
+    rightHeavyLoad: rightArr,
+  };
+};
+
+const calculateHeavyLoadPerMinuteChartData = (
+  indexData: ReadonlyArray<indexData>
+): ChartData<"line", ReadonlyArray<number>, number> => {
+  const heavyLoadPerMinute = calculateHeavyLoadPerMinute(indexData);
+  return {
+    labels: [...labels],
+    datasets: [
+      {
+        label: "分あたりの頭の高負荷運動の回数",
+        data: heavyLoadPerMinute.headHeavyLoad,
+        borderColor: "rgb(255, 99, 132)",
+        backgroundColor: "rgba(255, 99, 132, 0.5)",
+      },
+      {
+        label: "分あたりの左腕の高負荷運動の回数",
+        data: heavyLoadPerMinute.leftHeavyLoad,
+        borderColor: "rgb(2, 99, 132)",
+        backgroundColor: "rgba(2, 99, 132, 0.5)",
+      },
+      {
+        label: "分あたりの右腕の高負荷運動の回数",
+        data: heavyLoadPerMinute.rightHeavyLoad,
+        borderColor: "rgb(2, 200, 132)",
+        backgroundColor: "rgba(2, 200, 132, 0.5)",
+      },
+    ],
+  };
+};
+
+export const App = (): JSX.Element => {
+  const [MPU6886, setMPU6886] = useState<
+    ReadonlyArray<MPU6886Object> | undefined
+  >(undefined);
+  const [env3, setEnv3] = useState<ReadonlyArray<env3> | undefined>(undefined);
+  const [indexData, setIndexData] = useState<
+    ReadonlyArray<indexData> | undefined
+  >(undefined);
+
+  const getDataFromDB = (): void => {
+    axios
+      .get<ReadonlyArray<MPU6886Object>>(
+        "http://localhost:3030/api/edge_data/MPU6886"
+      )
+      .then((response) => {
+        console.log({ MPU6886: response.data });
+        setMPU6886(response.data);
+      });
+    axios
+      .get<ReadonlyArray<env3>>("http://localhost:3030/api/edge_data/ENV3")
+      .then((response) => {
+        console.log({ env3: response.data });
+        setEnv3(response.data);
+      });
+    axios
+      .get<ReadonlyArray<indexData>>(
+        "http://localhost:3030/api/edge_data/indexData"
+      )
+      .then((response) => {
+        console.log({ indexData: response.data });
+        setIndexData(response.data);
+      });
   };
 
-  const caliculateAvg = () => {
-    // diffの値を使うように変更する
-    const tempAvgHead: number[] = [];
-    const tempAvgRight: number[] = [];
-    const tempAvgLeft: number[] = [];
-    if (MPU6886) {
-      MPU6886.forEach((data) => {
-        let sumHead = 0;
-        let sumLeft = 0;
-        let sumRight = 0;
-        data.forEach((value) => {
-          sumHead +=
-            Math.abs(value.head.accX) +
-            Math.abs(value.head.accY) +
-            Math.abs(value.head.accZ) +
-            Math.abs(value.head.gyroX) +
-            Math.abs(value.head.gyroY) +
-            Math.abs(value.head.gyroZ);
-          sumLeft +=
-            Math.abs(value.left.accX) +
-            Math.abs(value.left.accY) +
-            Math.abs(value.left.accZ) +
-            Math.abs(value.left.gyroX) +
-            Math.abs(value.left.gyroY) +
-            Math.abs(value.left.gyroZ);
-          sumRight +=
-            Math.abs(value.right.accX) +
-            Math.abs(value.right.accY) +
-            Math.abs(value.right.accZ) +
-            Math.abs(value.right.gyroX) +
-            Math.abs(value.right.gyroY) +
-            Math.abs(value.right.gyroZ);
-        });
-        tempAvgHead.push(sumHead / data.length);
-        tempAvgRight.push(sumRight / data.length);
-        tempAvgLeft.push(sumLeft / data.length);
-      });
-    }
-    setAvgHead(tempAvgHead);
-    setAvgLeft(tempAvgLeft);
-    setAvgRight(tempAvgRight);
-  };
+  useEffect((): void => {
+    getDataFromDB();
+  }, []);
 
-  const heavyLoadPerMinute = () => {
-    const headArr = [0, 0, 0, 0, 0];
-    const leftArr = [0, 0, 0, 0, 0];
-    const rightArr = [0, 0, 0, 0, 0];
-    if (head) {
-      head.forEach((data) => {
-        const i = Math.round(data.index / 10);
-        headArr[i - 1]++;
-      });
-      left!.forEach((data) => {
-        const i = Math.round(data.index / 10);
-        leftArr[i - 1]++;
-      });
-      right!.forEach((data) => {
-        const i = Math.round(data.index / 10);
-        rightArr[i - 1]++;
-      });
-    }
-    console.log(headArr);
-    console.log(leftArr);
-    console.log(rightArr);
-    setHeadHeavyLoad(headArr);
-    setLeftHeavyLoad(leftArr);
-    setRightHeavyLoad(rightArr);
-  };
-
-  useEffect(() => {
-    if (!MPU6886) {
-      (async () => {
-        await getDataFromDB();
-      })();
-    }
-  });
-
-  useEffect(() => {
-    if (indexData !== null && armUpDown === null) {
-      formatArmUpDown();
-    }
-    if (indexData !== null && head === null) {
-      getHeavyLoad();
-    }
-    if (MPU6886 !== null && avgHead === null) {
-      caliculateAvg();
-    }
-    if (head !== null && headHeavyLoad === null) {
-      heavyLoadPerMinute();
-    }
-  });
+  const armUpDown: number | undefined =
+    indexData === undefined
+      ? undefined
+      : indexData[indexData.length - 1]?.armUpDown;
+  console.log({ armUpDown });
 
   // データ可視化のデータオプション等
 
@@ -193,67 +255,17 @@ const App = () => {
     Legend
   );
 
-  const options = {
+  const options: ChartOptions<"line"> = {
     responsive: true,
     plugins: {
       legend: {
-        position: "top" as const,
+        position: "top",
       },
       title: {
         display: true,
         text: "Chart.js Line Chart",
       },
     },
-  };
-
-  const labels = [1, 2, 3, 4, 5];
-
-  const MPU6886Data = {
-    labels,
-    datasets: [
-      {
-        label: "頭のacc・gyroの平均値",
-        data: avgHead,
-        borderColor: "rgb(255, 99, 132)",
-        backgroundColor: "rgba(255, 99, 132, 0.5)",
-      },
-      {
-        label: "左腕のacc・gyroの平均値",
-        data: avgLeft,
-        borderColor: "rgb(2, 99, 132)",
-        backgroundColor: "rgba(2, 99, 132, 0.5)",
-      },
-      {
-        label: "右腕のacc・gyroの平均値",
-        data: avgRight,
-        borderColor: "rgb(2, 200, 132)",
-        backgroundColor: "rgba(2, 200, 132, 0.5)",
-      },
-    ],
-  };
-
-  const heavyLoadData = {
-    labels,
-    datasets: [
-      {
-        label: "分あたりの頭の高負荷運動の回数",
-        data: headHeavyLoad,
-        borderColor: "rgb(255, 99, 132)",
-        backgroundColor: "rgba(255, 99, 132, 0.5)",
-      },
-      {
-        label: "分あたりの左腕の高負荷運動の回数",
-        data: leftHeavyLoad,
-        borderColor: "rgb(2, 99, 132)",
-        backgroundColor: "rgba(2, 99, 132, 0.5)",
-      },
-      {
-        label: "分あたりの右腕の高負荷運動の回数",
-        data: rightHeavyLoad,
-        borderColor: "rgb(2, 200, 132)",
-        backgroundColor: "rgba(2, 200, 132, 0.5)",
-      },
-    ],
   };
 
   return (
@@ -264,10 +276,18 @@ const App = () => {
           <h2>腕の上げ下げ回数: {armUpDown}</h2>
         </>
       )}
-      {avgHead && <Line options={options} data={MPU6886Data}></Line>}
-      {headHeavyLoad && <Line options={options} data={heavyLoadData} />}
+      {MPU6886 && (
+        <Line
+          options={options}
+          data={calculateMPU6886AverageChartData(MPU6886)}
+        ></Line>
+      )}
+      {indexData && (
+        <Line
+          options={options}
+          data={calculateHeavyLoadPerMinuteChartData(indexData)}
+        />
+      )}
     </div>
   );
 };
-
-export default App;
