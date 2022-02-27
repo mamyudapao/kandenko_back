@@ -31,6 +31,6 @@ app.listen(port, async () => {
 
 app.get("/api/edge_data/:SensorName", async (req, res) => {
   const collection = db.collection(req.params.SensorName);
-  const data = await collection.find({}, { limit: 300 }).toArray();
+  const data = await collection.find({}, { limit: 600 }).toArray();
   res.send(JSON.stringify(data));
 });
